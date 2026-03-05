@@ -5,6 +5,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   ReactNode,
 } from 'react'
 
@@ -46,40 +47,28 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setChainId(null)
     setBalance(null)
     setError(null)
-    setIsConnecting(false) // ← always reset spinner too
+    setIsConnecting(false)
   }, [])
 
   const connectWallet = useCallback(async () => {
     if (typeof window === 'undefined' || !window.ethereum) {
-      setError('MetaMask is not installed. Please install it from metamask.io')
+      setError('MetaMask not installed. Please install it from metamask.io')
       return
     }
 
-    // Prevent double-click
     if (isConnecting) return
 
     setIsConnecting(true)
     setError(null)
 
-    // Safety timeout — if MetaMask doesn't respond in 60s, reset
-    const timeout = setTimeout(() => {
-      setIsConnecting(false)
-      setError('Connection timed out. Please try again.')
-    }, 60000)
-
     try {
-      // Always prompt MetaMask to show account selection
-      await window.ethereum.request({
-        method: 'wallet_requestPermissions',
-        params: [{ eth_accounts: {} }],
-      })
-
+      // Use eth_requestAccounts — works reliably on all browsers and Vercel
       const accounts: string[] = await window.ethereum.request({
-        method: 'eth_accounts',
+        method: 'eth_requestAccounts',
       })
 
       if (!accounts || accounts.length === 0) {
-        throw new Error('No accounts found. Please unlock MetaMask.')
+        throw new Error('No accounts returned from MetaMask.')
       }
 
       const userAddress = accounts[0]
@@ -87,38 +76,58 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       const rawChainId: string = await window.ethereum.request({
         method: 'eth_chainId',
       })
-      const parsedChainId = parseInt(rawChainId, 16)
 
       const rawBalance: string = await window.ethereum.request({
         method: 'eth_getBalance',
         params: [userAddress, 'latest'],
       })
-      const balanceInEth = (parseInt(rawBalance, 16) / 1e18).toFixed(4)
 
       setAddress(userAddress)
-      setChainId(parsedChainId)
-      setBalance(balanceInEth)
+      setChainId(parseInt(rawChainId, 16))
+      setBalance((parseInt(rawBalance, 16) / 1e18).toFixed(4))
       setIsConnected(true)
 
     } catch (err: any) {
-      // User closed MetaMask or rejected — reset silently
-      if (err?.code === 4001 || err?.code === -32603) {
-        setError(null) // don't show error for user cancel
+      // User rejected or closed MetaMask — reset silently
+      if (err?.code === 4001) {
+        setError(null)
       } else if (err?.code === -32002) {
-        setError('MetaMask is already open. Please check your MetaMask extension.')
+        setError('MetaMask is already open. Check your browser extension.')
       } else {
         setError(err?.message ?? 'Failed to connect wallet')
       }
       setAddress(null)
       setIsConnected(false)
-      setChainId(null)
-      setBalance(null)
     } finally {
-      // ALWAYS reset connecting state no matter what happened
-      clearTimeout(timeout)
       setIsConnecting(false)
     }
   }, [isConnecting])
+
+  // Listen for account/chain changes
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.ethereum) return
+
+    const handleAccountsChanged = (accounts: string[]) => {
+      if (!accounts || accounts.length === 0) {
+        disconnectWallet()
+      } else {
+        setAddress(accounts[0])
+      }
+    }
+
+    const handleChainChanged = () => {
+      // Reload on chain change as recommended by MetaMask
+      window.location.reload()
+    }
+
+    window.ethereum.on('accountsChanged', handleAccountsChanged)
+    window.ethereum.on('chainChanged', handleChainChanged)
+
+    return () => {
+      window.ethereum?.removeListener('accountsChanged', handleAccountsChanged)
+      window.ethereum?.removeListener('chainChanged', handleChainChanged)
+    }
+  }, [disconnectWallet])
 
   return (
     <WalletContext.Provider value={{
