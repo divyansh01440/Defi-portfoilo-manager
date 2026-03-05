@@ -14,7 +14,7 @@ Built for the **Chainlink Convergence Hackathon 2026** — Track: `#cre-ai`
 
 ## 🌐 Live Demo
 
-**[autoportfolio.vercel.app](https://autoportfolio.vercel.app)** ← Replace with your actual URL after deploying
+**[autoportfolio.vercel.app](https://defi-portfoilo-manager-81uk.vercel.app/)**
 
 ---
 
