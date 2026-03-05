@@ -46,33 +46,34 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setChainId(null)
     setBalance(null)
     setError(null)
+    setIsConnecting(false) // ← always reset spinner too
   }, [])
 
   const connectWallet = useCallback(async () => {
-    // Make sure MetaMask is installed
     if (typeof window === 'undefined' || !window.ethereum) {
       setError('MetaMask is not installed. Please install it from metamask.io')
       return
     }
 
-    // Make sure it is actually MetaMask and not another wallet
-    if (!window.ethereum.isMetaMask) {
-      setError('Please use MetaMask to connect')
-      return
-    }
+    // Prevent double-click
+    if (isConnecting) return
 
     setIsConnecting(true)
     setError(null)
 
+    // Safety timeout — if MetaMask doesn't respond in 60s, reset
+    const timeout = setTimeout(() => {
+      setIsConnecting(false)
+      setError('Connection timed out. Please try again.')
+    }, 60000)
+
     try {
-      // Force MetaMask to show the account selection popup
-      // wallet_requestPermissions always prompts the user to pick an account
+      // Always prompt MetaMask to show account selection
       await window.ethereum.request({
         method: 'wallet_requestPermissions',
         params: [{ eth_accounts: {} }],
       })
 
-      // After permission granted, get the selected accounts
       const accounts: string[] = await window.ethereum.request({
         method: 'eth_accounts',
       })
@@ -83,13 +84,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
       const userAddress = accounts[0]
 
-      // Get chain ID
       const rawChainId: string = await window.ethereum.request({
         method: 'eth_chainId',
       })
       const parsedChainId = parseInt(rawChainId, 16)
 
-      // Get ETH balance
       const rawBalance: string = await window.ethereum.request({
         method: 'eth_getBalance',
         params: [userAddress, 'latest'],
@@ -102,32 +101,30 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       setIsConnected(true)
 
     } catch (err: any) {
-      if (err?.code === 4001) {
-        setError('Connection rejected. Please approve in MetaMask.')
+      // User closed MetaMask or rejected — reset silently
+      if (err?.code === 4001 || err?.code === -32603) {
+        setError(null) // don't show error for user cancel
       } else if (err?.code === -32002) {
-        setError('MetaMask is already processing a request. Please open MetaMask.')
+        setError('MetaMask is already open. Please check your MetaMask extension.')
       } else {
         setError(err?.message ?? 'Failed to connect wallet')
       }
-      disconnectWallet()
+      setAddress(null)
+      setIsConnected(false)
+      setChainId(null)
+      setBalance(null)
     } finally {
+      // ALWAYS reset connecting state no matter what happened
+      clearTimeout(timeout)
       setIsConnecting(false)
     }
-  }, [disconnectWallet])
+  }, [isConnecting])
 
   return (
-    <WalletContext.Provider
-      value={{
-        address,
-        isConnected,
-        isConnecting,
-        chainId,
-        balance,
-        connectWallet,
-        disconnectWallet,
-        error,
-      }}
-    >
+    <WalletContext.Provider value={{
+      address, isConnected, isConnecting,
+      chainId, balance, connectWallet, disconnectWallet, error,
+    }}>
       {children}
     </WalletContext.Provider>
   )
